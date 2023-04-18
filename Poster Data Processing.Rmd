@@ -1,0 +1,235 @@
+---
+title: "PosterDataProcessing"
+author: "Devin Gee and Lydia Zhang"
+date: "2023-04-18"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+##                            Does Educational Path Relate to Health?
+
+
+```{r cars, echo =FALSE}
+
+knitr::opts_chunk$set(cache=TRUE,
+                      message=FALSE, warning=FALSE,
+                      fig.path='figs/',
+                      cache.path = '_cache/',
+                      fig.process = function(x) {
+                      x2 = sub('-\\d+([.][a-z]+)$', '\\1', x)
+                      if (file.rename(x, x2)) x2 else x
+                      }, tidy.opts=list(width.cutoff=60),tidy=TRUE)
+
+#font_import()
+#loadfonts(device = "win")
+setwd("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor")
+```
+
+### Import Packages
+
+```{r}
+library(formatR)
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(extrafont)
+```
+
+
+### Read in Files
+```{r pressure, echo=FALSE, warnings = FALSE}
+#Wave IV Data
+df_1<-readr::read_tsv("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor/data/dataOfInt/DS22-Wave-IV-In-Home-Questionnaire.tsv")
+
+#Select 2008 education level data
+education <- select(df_1,AID,H4ED2)
+colnames(education) <- c("ID","Education_level_2008")
+
+#Wave V Data
+df_2<-readr::read_tsv("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor/data/fullData/DS0032/21600-0032-Data.tsv")
+
+#Select 2018 education level data
+education2 <- select(df_2,AID,H5OD11)
+colnames(education2) <- c("ID","Education_level_2018")
+
+```
+
+
+```{r, warnings = FALSE}
+
+#Collect Wave 5 biomarker data
+WaveV <- lapply(paste0("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor/data/fullData/DS00",32:42
+                       ,"/21600-00",32:42,"-Data.tsv"), read_tsv)
+ 
+biomarkerVDataset <- c(WaveV[3:10])
+```
+
+```{r, warnings = FALSE}
+#Import
+df_2<-readr::read_tsv("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor/data/dataOfInt/Lydia/medication.tsv")
+medication <- select(df_2,AID,H5MEDSRC, H5ECRP8)
+colnames(medication) <- c("ID","BloodPressure","Inflammatory")
+medication_comb<-
+  medication %>% transmute(ID = ID, BloodPressure+ Inflammatory)
+head(medication_comb)
+```
+
+
+```{r, warnings = FALSE}
+df_3 <-readr::read_tsv("C:/Users/devin/OneDrive/Documents/QTM302/Data Descriptor/data/dataOfInt/Lydia/psy.tsv")
+Psy <- select(df_3, AID, H2HS5)
+colnames(Psy) <- c("ID","Psyc_Consult")
+```
+
+### Join Biomarker Data frames
+```{r, warnings = FALSE}
+biomarkerVJoined <- left_join(data.frame(biomarkerVDataset[2]),
+                              data.frame(biomarkerVDataset[8]), by= c("AID","H5Q045D")) 
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[6]), by= c("AID","H5Q045F")) 
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[4]), by= c("AID","H5FASTTM","H5Q045B")) 
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[1]), by= c("AID","H5ARMINS","H5ARMCIR","H5ARM")) 
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[3]), by= c("AID")) 
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[5]), by= c("AID"))
+
+biomarkerVJoined <- left_join(data.frame(biomarkerVJoined),
+                              data.frame(biomarkerVDataset[7]), by= c("AID")) 
+```
+
+
+
+
+
+
+
+
+
+```{r, warnings = FALSE}
+full_list <- list(education,education2,medication_comb,Psy)
+table <- 
+  full_list %>% reduce(full_join, by='ID')
+
+colnames(table)[4] <- "Medication_Use"
+table <- mutate(table, Medication_Use = ifelse(is.na(Medication_Use), "No Reported Use","Reported Use"))
+
+#sum(is.na(table$Psyc_Consult))
+table <- na.omit(table)
+```
+
+```{r, warnings = FALSE}
+# if you graduated during the survey years you would be misclassified
+recodedTable <- mutate(table, Education_level_2008= ifelse(table$Education_level_2008 < 7, 0,1 ), Education_level_2018= ifelse(table$Education_level_2018 < 10, 0,1 ))
+#0 if it stayed the same 1 if it changed
+recodedTable <- mutate(recodedTable, Education_Change = case_when(table$Education_level_2008 < 7 & table$Education_level_2018 >= 10 ~ 1, TRUE ~ 0))
+#0 if they are non graduate, 1 if they are traditional graduate, 2 if they are non traditional graduate
+recodedTable <- mutate(recodedTable, Classification = case_when(recodedTable$Education_level_2008 == 0 & recodedTable$Education_Change == 0 ~ "Non-College Graduates", recodedTable$Education_level_2008 == 1 & recodedTable$Education_Change == 0 ~ "Traditional College Graduates", recodedTable$Education_Change == 1 ~ "Non-Traditional College Graduates"), Psyc_Consult= ifelse(table$Psyc_Consult == 0, "No Reported Use","Reported Use" ))
+```
+
+
+```{r, warnings = FALSE}
+contigencytable <-table(recodedTable$Classification, recodedTable$Medication_Use)
+mytest <- chisq.test(contigencytable)
+mytest
+```
+
+
+
+
+
+
+``````{r, warnings = FALSE}
+par(mar = c(1, 1, 1, 1))
+contigencytable <-table(recodedTable$Classification, recodedTable$Psyc_Consult)
+chiTest <- chisq.test(contigencytable)
+chiDf <- melt(prop.table(contigencytable, margin = 1))
+
+ggplot(data=chiDf, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradientn(colours=c("#BCBDDC","#CCC1DA","#B3A2C7","#604A7B")) +
+  labs(title="Psychological Care Usage By \n Educational Pathway", x="Educational Path", y="Psychological Care Use", fill="Proportion") +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+
+  annotate("text",x=2.05, y=2.25,label=paste0("Chi-Square \n p-value = ",formatC(chiTest$p.value, format = "e", digits = 2)), size=5, family = "Garamond")+
+  coord_cartesian(clip = "off")+
+  theme(plot.title = element_text(hjust = 0.5),text = element_text(size=16,family="Garamond"))
+
+``````
+
+
+
+
+
+``````{r, warnings = FALSE}
+par(mar = c(1, 1, 1, 1))
+Mcontigencytable <-table(recodedTable$Classification, recodedTable$Medication_Use)
+MchiTest <- chisq.test(Mcontigencytable)
+MchiDf <- melt(prop.table(Mcontigencytable, margin = 1))
+
+ggplot(data=MchiDf, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradientn(colours=c("#BCBDDC","#CCC1DA","#B3A2C7","#604A7B")) +
+  labs(title="Medication Use By \n Educational Pathway", x="Educational Path", y="Medication Use", fill="Proportion") +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+
+  annotate("text",x=2.05, y=2.25,label=paste0("Chi-Square \n p-value = ",round(MchiTest$p.value, digits = 3)), size=5, family = "Garamond")+
+  coord_cartesian(clip = "off")+
+  theme(plot.title = element_text(hjust = 0.5),text = element_text(size=16,family="Garamond"))
+``````
+
+
+
+
+
+```{r, warnings = FALSE}
+recodedTable$AID <- recodedTable$ID
+interest <- select(biomarkerVJoined, "C_Reactive_Protein" = H5CRP, "Creatinine_and_Cystatin_C" = H5GFRCC, "Hemoglobin_A1c" = H5HBA1C,AID)
+combinedbiomarker <- left_join(data.frame(recodedTable),data.frame(unique(interest)), by= c("AID"))
+combinedbiomarker <- na.omit(unique(combinedbiomarker))
+```
+
+```{r}
+par(family="Garamond", cex = 1,mar = c(2, 2, 2, 2) )
+hist(combinedbiomarker$Creatinine_and_Cystatin_C, main = "Creatinine and Cystatin C", xlab = "Estimated Glomerular Filtration Rate (mL/min/1.73 m2)", 
+     col = "#604A7B", xlim = range(combinedbiomarker$Creatinine_and_Cystatin_C, na.rm = TRUE))
+```
+
+```{r}
+par(family="Garamond", cex = 1,mar = c(2, 2, 2, 2) )
+hist(combinedbiomarker$Hemoglobin_A1c, main = "Hemoglobin A1c", xlab = "Hemoglobin A1c (%)", 
+     col = "#B3A2C7", xlim = range(combinedbiomarker$Hemoglobin_A1c, na.rm = TRUE))
+```
+
+
+
+```{r, warnings = FALSE}
+hist(combinedbiomarker$C_Reactive_Protein, main = "C-Reactive Protein (CRP)", xlab = "CRP (mg/L)", 
+     col = "#BCBDDC", xlim = range(combinedbiomarker$C_Reactive_Protein, na.rm = TRUE))
+
+```
+
+
+```{r, warnings = FALSE}
+model <- lm(cbind(C_Reactive_Protein, Creatinine_and_Cystatin_C, Hemoglobin_A1c) ~ Classification, data = combinedbiomarker)
+
+# Create scatter plot with regression line
+mydf <- reshape2::melt(select(combinedbiomarker,Classification,C_Reactive_Protein, Creatinine_and_Cystatin_C, Hemoglobin_A1c), id.vars="Classification", variable.name="Variable", value.name="Value")
+# Create scatterplot with regression line for each dependent variable
+ggplot(mydf, aes(x = Classification, y = Value, color = Variable)) +
+  geom_point() +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+
+  scale_colour_brewer(palette = "PuBuGn")+
+  stat_smooth(method = "lm", se = FALSE) +
+  labs(x = "Educational Path", y = "", color = "Biomarker") +
+  theme(plot.title = element_text(hjust = 0.5),text = element_text(size=9,family="Garamond"))
+```
